@@ -1,0 +1,61 @@
+name: Build installers
+on:
+  workflow_dispatch:
+    inputs:
+      source_zip:
+        description: "Optional path of a source ZIP in the repo (leave empty to use repo source)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install Inno Setup and QEMU
+        shell: pwsh
+        run: |
+          choco install innosetup qemu -y --no-progress
+          $q = "C:\Program Files\qemu"
+          if (Test-Path $q) { New-Item -ItemType Directory -Force installer\windows\qemu | Out-Null; Copy-Item "$q\*" installer\windows\qemu -Recurse -Force }
+      - name: Build
+        shell: pwsh
+        run: |
+          $src = "${{ github.event.inputs.source_zip }}"
+          if ($src) { python build.py --windows --source "$src" } else { python build.py --windows }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/*_Setup.exe
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: System packages and appimagetool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev fakeroot libfuse2 wget libgl1 libxcb-cursor0 libxkbcommon-x11-0
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          echo "APPIMAGETOOL=$PWD/appimagetool" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          SRC="${{ github.event.inputs.source_zip }}"
+          if [ -n "$SRC" ]; then python build.py --linux --source "$SRC"; else python build.py --linux; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+          
